@@ -116,6 +116,10 @@ export default function FacialRecognition() {
       if (videoRef.current) {
         videoRef.current.srcObject = null
       }
+      if (canvasRef.current) {
+        const context = canvasRef.current.getContext("2d")
+        context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+      }
     }
     setIsDetecting(false)
     setDetectionResult(null)
