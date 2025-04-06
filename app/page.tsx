@@ -1,5 +1,4 @@
 import FacialRecognition from "@/components/facial-recognition"
-import { ThemeToggle } from "@/components/theme-toggle"
 
 export default function Home() {
   return (
@@ -7,7 +6,6 @@ export default function Home() {
       <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold tracking-tight">Facial Recognition System</h1>
-          <ThemeToggle />
         </div>
         <FacialRecognition />
       </div>
