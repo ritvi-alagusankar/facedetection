@@ -9,18 +9,27 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function FacialRecognition() {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isDetecting, setIsDetecting] = useState(false)
   const [detectionResult, setDetectionResult] = useState<string | null>(null)
   const [activeModel, setActiveModel] = useState("deep-learning")
   const [deepLearningModel, setDeepLearningModel] = useState("facenet")
+  const intervalRef = useRef<number | null>(null)
+  const processingRef = useRef(false)
 
   // Start webcam
   const startWebcam = async () => {
     try {
       setIsLoading(true)
+      
+      // Clear any existing interval first
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
@@ -42,6 +51,10 @@ export default function FacialRecognition() {
   }
 
   const postFrameToAPI = async (frame: Blob, modelType: string) => {
+    if (processingRef.current) return; // Skip if already processing
+    
+    processingRef.current = true;
+    
     const formData = new FormData();
     formData.append("file", frame);
     formData.append("model_type", modelType);
@@ -54,42 +67,47 @@ export default function FacialRecognition() {
       });
       if (response.ok) {
         const data = await response.json();
-        console.log("Image uploaded successfully", data);
+        console.log("Image processed successfully", data);
         drawBoundingBoxes(data.bounding, data.names);
       } else {
         console.error("Error uploading image", response.statusText);
       }
     } catch (error) {
       console.error("Error posting frame to API", error);
+    } finally {
+      processingRef.current = false;
     }
   };
   
   const captureFrame = () => {
-    const canvas = document.createElement("canvas");
+    if (!videoRef.current || processingRef.current) return;
+    
+    const canvas = new OffscreenCanvas(
+      videoRef.current.videoWidth,
+      videoRef.current.videoHeight
+    );
     const context = canvas.getContext("2d");
   
-    if (!videoRef.current || !context) return;
-  
-    // Set canvas size to match video dimensions
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
+    if (!context) return;
   
     // Draw the current video frame onto the canvas
     context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
   
     // Convert the canvas to a Blob (image file)
-    canvas.toBlob((blob) => {
-      if (blob) {
-        postFrameToAPI(blob, activeModel);
-      }
-    }, "image/jpeg");
+    canvas.convertToBlob({ type: "image/jpeg", quality: 0.8 }).then((blob) => {
+      postFrameToAPI(blob, activeModel);
+    });
   };
   
   const drawBoundingBoxes = (boxes: number[][], names: string[]) => {
-    if (!canvasRef.current || !videoRef.current || !boxes || boxes.length === 0) return;
+    if (!canvasRef.current || !videoRef.current) 
+    {
+      return;
+    }
 
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
+  
     if (!context) return;
 
     // Set canvas size to match video
@@ -98,7 +116,10 @@ export default function FacialRecognition() {
 
     // Clear previous drawings
     context.clearRect(0, 0, canvas.width, canvas.height);
-
+    if (!boxes || boxes.length === 0)
+      {
+        return;
+      }
     // Define colors based on active model
     const colors = activeModel === "traditional" 
       ? {
@@ -170,41 +191,77 @@ export default function FacialRecognition() {
       context.shadowColor = 'transparent';
       context.shadowBlur = 0;
     });
-  };
-  
-
-  // Stop webcam
-  const stopWebcam = () => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop())
-      setStream(null)
-      if (videoRef.current) {
-        videoRef.current.srcObject = null
-      }
-      if (canvasRef.current) {
-        const context = canvasRef.current.getContext("2d")
-        context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
-      }
+    
+    // Update detection result
+    if (names.length > 0) {
+      setDetectionResult(names.join(", "));
     }
-    setIsDetecting(false)
-    setDetectionResult(null)
-  }
+  };
 
-
-  // Clean up on unmount
+  // Clean up on unmount or when stream changes
   useEffect(() => {
-    const interval = setInterval(captureFrame, 100); // Capture every 100ms
+    // Only start interval if webcam is active
+    if (stream && videoRef.current) {
+      // Clear any existing interval first
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+      
+      // Wait for video to be ready
+      videoRef.current.onloadedmetadata = () => {
+        // Start new interval with faster timing (150ms instead of 300ms)
+        intervalRef.current = window.setInterval(() => {
+          if (stream && !processingRef.current) { // Only capture if not already processing
+            captureFrame();
+          }
+        }, 150); // Decreased from 300ms to 150ms for more fluid updates
+      };
+    }
 
     return () => {
+      // Stop interval
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      
       // Stop webcam stream
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
+    };
+  }, [stream, activeModel, deepLearningModel]);
 
-      // Clear the interval to stop frame capture
-      clearInterval(interval);
-    } 
-  }, [stream])
+  // Stop webcam
+  const stopWebcam = () => {
+    // Stop interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    // Stop webcam stream
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      setStream(null);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      
+      if (canvasRef.current) {
+        const context = canvasRef.current.getContext("2d");
+        if (context) {
+          context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+      }
+    }
+    
+    setIsDetecting(false);
+    setDetectionResult(null);
+    processingRef.current = false;
+  };
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
@@ -295,7 +352,7 @@ export default function FacialRecognition() {
                 </div>
                 <div className="text-sm text-white/50 text-left">
                   {deepLearningModel === "facenet" 
-                    ? "FaceNet: A model by Google  that maps faces to a compact embedding space using triplet loss for accurate face recognition."
+                    ? "FaceNet: A model by Google that maps faces to a compact embedding space using triplet loss for accurate face recognition."
                     : "DeepFace: A model by Facebook that uses 3D alignment and high-dimensional embeddings for face recognition."}
                 </div>
               </div>
@@ -337,17 +394,7 @@ export default function FacialRecognition() {
                 </div>
               </div>
 
-              {detectionResult && (
-                <div className="w-full p-6 bg-black/30 rounded-xl flex items-center space-x-4 border border-white/10 backdrop-blur-sm">
-                  <div className="bg-purple-500/20 p-3 rounded-full">
-                    <User className="h-6 w-6 text-purple-400" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-lg text-white">Detected: {detectionResult}</p>
-                    <p className="text-sm text-white/50">Using {deepLearningModel}</p>
-                  </div>
-                </div>
-              )}
+              
             </CardContent>
             <CardFooter className="flex justify-between p-6">
               {!stream ? (
@@ -461,4 +508,3 @@ export default function FacialRecognition() {
     </div>
   )
 }
-
