@@ -14,7 +14,8 @@ export default function FacialRecognition() {
   const [isLoading, setIsLoading] = useState(false)
   const [isDetecting, setIsDetecting] = useState(false)
   const [detectionResult, setDetectionResult] = useState<string | null>(null)
-  const [activeModel, setActiveModel] = useState("traditional")
+  const [activeModel, setActiveModel] = useState("deep-learning")
+  const [deepLearningModel, setDeepLearningModel] = useState("facenet")
 
   // Start webcam
   const startWebcam = async () => {
@@ -40,19 +41,21 @@ export default function FacialRecognition() {
     }
   }
 
-  const postFrameToAPI = async (frame) => {
+  const postFrameToAPI = async (frame: Blob, modelType: string) => {
     const formData = new FormData();
     formData.append("file", frame);
-  
+    formData.append("model_type", modelType);
+    formData.append("deep_learning_model", deepLearningModel);
+
     try {
       const response = await fetch("http://localhost:8000/upload", {
         method: "POST",
-        body: formData,  // Ensure this contains the file you want to upload
+        body: formData,
       });
       if (response.ok) {
-        const data = await response.json(); // Get JSON response
+        const data = await response.json();
         console.log("Image uploaded successfully", data);
-        drawBoundingBoxes(data.bounding, data.names); // Call function to draw bounding boxes
+        drawBoundingBoxes(data.bounding, data.names);
       } else {
         console.error("Error uploading image", response.statusText);
       }
@@ -65,6 +68,8 @@ export default function FacialRecognition() {
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
   
+    if (!videoRef.current || !context) return;
+  
     // Set canvas size to match video dimensions
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
@@ -75,7 +80,7 @@ export default function FacialRecognition() {
     // Convert the canvas to a Blob (image file)
     canvas.toBlob((blob) => {
       if (blob) {
-        postFrameToAPI(blob);
+        postFrameToAPI(blob, activeModel);
       }
     }, "image/jpeg");
   };
@@ -203,24 +208,171 @@ export default function FacialRecognition() {
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
-      <Tabs defaultValue="traditional" className="w-full" onValueChange={(value) => {
+      <Tabs defaultValue="deep-learning" className="w-full" onValueChange={(value) => {
         setActiveModel(value);
-        stopWebcam(); // Stop camera when switching tabs
+        stopWebcam();
       }}>
         <TabsList className="grid w-full grid-cols-2 mb-8 bg-black/20 backdrop-blur-sm p-1 rounded-lg border border-white/10">
-          <TabsTrigger 
-            value="traditional" 
-            className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-500/20 data-[state=active]:to-blue-500/20 data-[state=active]:text-cyan-400 data-[state=active]:shadow-[0_0_15px_rgba(34,211,238,0.3)]"
-          >
-            Traditional Methods
-          </TabsTrigger>
           <TabsTrigger 
             value="deep-learning" 
             className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500/20 data-[state=active]:to-pink-500/20 data-[state=active]:text-purple-400 data-[state=active]:shadow-[0_0_15px_rgba(192,132,252,0.3)]"
           >
             Deep Learning Methods
           </TabsTrigger>
+          <TabsTrigger 
+            value="traditional" 
+            className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-500/20 data-[state=active]:to-blue-500/20 data-[state=active]:text-cyan-400 data-[state=active]:shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+          >
+            Traditional Methods
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="deep-learning" className="mt-0">
+          <Card className="border border-white/10 bg-black/20 backdrop-blur-sm shadow-[0_0_30px_rgba(0,0,0,0.3)]">
+            <CardHeader className="space-y-2">
+              <CardTitle className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                Deep Learning Facial Recognition
+              </CardTitle>
+              <CardDescription className="text-base text-white/70">
+                Using advanced neural networks for more accurate recognition.
+              </CardDescription>
+              <div className="flex flex-col space-y-4 mt-4">
+                <div className="flex space-x-4">
+                  <Button
+                    variant={deepLearningModel === "facenet" ? "default" : "outline"}
+                    onClick={() => {
+                      setDeepLearningModel("facenet");
+                      stopWebcam();
+                    }}
+                    className={`w-full transition-all duration-300 ${
+                      deepLearningModel === "facenet"
+                        ? "bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-[0_0_15px_rgba(192,132,252,0.3)]"
+                        : "border-purple-400 text-purple-400 hover:bg-purple-400/10 hover:shadow-[0_0_15px_rgba(192,132,252,0.1)]"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                        <circle cx="7" cy="7" r="2" fill="currentColor"/>
+                        <circle cx="17" cy="7" r="2" fill="currentColor"/>
+                        <circle cx="7" cy="17" r="2" fill="currentColor"/>
+                        <circle cx="17" cy="17" r="2" fill="currentColor"/>
+                      </svg>
+                      <span>FaceNet</span>
+                    </div>
+                  </Button>
+                  <Button
+                    variant={deepLearningModel === "deepface" ? "default" : "outline"}
+                    onClick={() => {
+                      setDeepLearningModel("deepface");
+                      stopWebcam();
+                    }}
+                    className={`w-full transition-all duration-300 ${
+                      deepLearningModel === "deepface"
+                        ? "bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-[0_0_15px_rgba(192,132,252,0.3)]"
+                        : "border-purple-400 text-purple-400 hover:bg-purple-400/10 hover:shadow-[0_0_15px_rgba(192,132,252,0.1)]"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M7 2L7 22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M17 2L17 22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                        <circle cx="7" cy="7" r="2" fill="currentColor"/>
+                        <circle cx="17" cy="7" r="2" fill="currentColor"/>
+                        <circle cx="7" cy="17" r="2" fill="currentColor"/>
+                        <circle cx="17" cy="17" r="2" fill="currentColor"/>
+                      </svg>
+                      <span>DeepFace</span>
+                    </div>
+                  </Button>
+                </div>
+                <div className="text-sm text-white/50 text-left">
+                  {deepLearningModel === "facenet" 
+                    ? "FaceNet: A model by Google  that maps faces to a compact embedding space using triplet loss for accurate face recognition."
+                    : "DeepFace: A model by Facebook that uses 3D alignment and high-dimensional embeddings for face recognition."}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center space-y-6">
+              <div className="relative w-full aspect-video bg-black/30 rounded-xl overflow-hidden flex items-center justify-center border border-white/10 shadow-[0_0_20px_rgba(192,132,252,0.1)]">
+                {!stream && !isLoading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center h-full bg-black/20 backdrop-blur-sm">
+                    <Camera className="h-16 w-16 text-purple-400 mb-4" />
+                    <p className="text-white/70 text-lg">Camera not active</p>
+                  </div>
+                )}
+                {isLoading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center h-full bg-black/20 backdrop-blur-sm">
+                    <Loader2 className="h-12 w-12 animate-spin text-purple-400 mb-4" />
+                    <p className="text-white/70 text-lg">Starting camera...</p>
+                  </div>
+                )}
+                <div className="relative w-full h-full">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${!stream ? "hidden" : ""}`}
+                  />
+                  <canvas
+                    ref={canvasRef}
+                    className="absolute top-0 left-0 w-full h-full"
+                  />
+                  {isDetecting && stream && (
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                      <div className="flex flex-col items-center">
+                        <Loader2 className="h-12 w-12 animate-spin text-purple-400 mb-4" />
+                        <p className="text-white text-lg font-medium">Analyzing with {deepLearningModel}...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {detectionResult && (
+                <div className="w-full p-6 bg-black/30 rounded-xl flex items-center space-x-4 border border-white/10 backdrop-blur-sm">
+                  <div className="bg-purple-500/20 p-3 rounded-full">
+                    <User className="h-6 w-6 text-purple-400" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-lg text-white">Detected: {detectionResult}</p>
+                    <p className="text-sm text-white/50">Using {deepLearningModel}</p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+            <CardFooter className="flex justify-between p-6">
+              {!stream ? (
+                <Button 
+                  onClick={startWebcam} 
+                  disabled={isLoading} 
+                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-[0_0_15px_rgba(192,132,252,0.3)]"
+                >
+                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Start Camera
+                </Button>
+              ) : (
+                <div className="flex space-x-4 w-full">
+                  <Button 
+                    variant="outline" 
+                    onClick={stopWebcam} 
+                    className="flex-1 border-purple-400 text-purple-400 hover:bg-purple-400/10"
+                  >
+                    Stop Camera
+                  </Button>
+                </div>
+              )}
+            </CardFooter>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="traditional" className="mt-0">
           <Card className="border border-white/10 bg-black/20 backdrop-blur-sm shadow-[0_0_30px_rgba(0,0,0,0.3)]">
@@ -262,7 +414,7 @@ export default function FacialRecognition() {
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
                       <div className="flex flex-col items-center">
                         <Loader2 className="h-12 w-12 animate-spin text-cyan-400 mb-4" />
-                        <p className="text-white text-lg font-medium">Analyzing with deep learning...</p>
+                        <p className="text-white text-lg font-medium">Analyzing with traditional methods...</p>
                       </div>
                     </div>
                   )}
@@ -297,90 +449,6 @@ export default function FacialRecognition() {
                     variant="outline" 
                     onClick={stopWebcam} 
                     className="flex-1 border-cyan-400 text-cyan-400 hover:bg-cyan-400/10"
-                  >
-                    Stop Camera
-                  </Button>
-                </div>
-              )}
-            </CardFooter>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="deep-learning" className="mt-0">
-          <Card className="border border-white/10 bg-black/20 backdrop-blur-sm shadow-[0_0_30px_rgba(0,0,0,0.3)]">
-            <CardHeader className="space-y-2">
-              <CardTitle className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                Deep Learning Facial Recognition
-              </CardTitle>
-              <CardDescription className="text-base text-white/70">
-                Using neural networks like CNN, FaceNet, and DeepFace for more accurate recognition.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center space-y-6">
-              <div className="relative w-full aspect-video bg-black/30 rounded-xl overflow-hidden flex items-center justify-center border border-white/10 shadow-[0_0_20px_rgba(192,132,252,0.1)]">
-                {!stream && !isLoading && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center h-full bg-black/20 backdrop-blur-sm">
-                    <Camera className="h-16 w-16 text-purple-400 mb-4" />
-                    <p className="text-white/70 text-lg">Camera not active</p>
-                  </div>
-                )}
-                {isLoading && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center h-full bg-black/20 backdrop-blur-sm">
-                    <Loader2 className="h-12 w-12 animate-spin text-purple-400 mb-4" />
-                    <p className="text-white/70 text-lg">Starting camera...</p>
-                  </div>
-                )}
-                <div className="relative w-full h-full">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`w-full h-full object-cover ${!stream ? "hidden" : ""}`}
-                  />
-                  <canvas
-                    ref={canvasRef}
-                    className="absolute top-0 left-0 w-full h-full"
-                  />
-                  {isDetecting && stream && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
-                      <div className="flex flex-col items-center">
-                        <Loader2 className="h-12 w-12 animate-spin text-purple-400 mb-4" />
-                        <p className="text-white text-lg font-medium">Analyzing with deep learning...</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {detectionResult && (
-                <div className="w-full p-6 bg-black/30 rounded-xl flex items-center space-x-4 border border-white/10 backdrop-blur-sm">
-                  <div className="bg-purple-500/20 p-3 rounded-full">
-                    <User className="h-6 w-6 text-purple-400" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-lg text-white">Detected: {detectionResult}</p>
-                    <p className="text-sm text-white/50">Using deep learning methods</p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="flex justify-between p-6">
-              {!stream ? (
-                <Button 
-                  onClick={startWebcam} 
-                  disabled={isLoading} 
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-[0_0_15px_rgba(192,132,252,0.3)]"
-                >
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Start Camera
-                </Button>
-              ) : (
-                <div className="flex space-x-4 w-full">
-                  <Button 
-                    variant="outline" 
-                    onClick={stopWebcam} 
-                    className="flex-1 border-purple-400 text-purple-400 hover:bg-purple-400/10"
                   >
                     Stop Camera
                   </Button>

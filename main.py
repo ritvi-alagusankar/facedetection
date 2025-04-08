@@ -1,6 +1,6 @@
 import os
 import shutil
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,31 +12,42 @@ if not os.path.exists(UPLOAD_DIRECTORY):
     os.makedirs(UPLOAD_DIRECTORY)
 
 def traditional_model(image_path):
-    # Assuming this is the placeholder model function for now
     return [["Jose", "Ritvi"], [[100, 200, 100, 100], [200, 300, 100, 100]]]
 
+def facenet_model(image_path):
+    return [["Jose", "Amisha"], [[100, 200, 100, 100], [200, 300, 100, 100]]]
+
+def deepface_model(image_path):
+    return [["Ritvi", "Amisha"], [[100, 200, 100, 100], [200, 300, 100, 100]]]
+
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), model_type: str = Form(...), deep_learning_model: str = Form(None)):
     try:
-        # Ensure the uploaded file is an image
         if not file.content_type.startswith('image/'):
             return JSONResponse(content={"message": "The uploaded file is not an image."}, status_code=400)
 
-        print(f"Received file: {file.filename}")
+        print(f"Received file: {file.filename} with model type: {model_type} and deep learning model: {deep_learning_model}")
 
-        # Save the file with a .jpg extension if necessary
         file_location = os.path.join(UPLOAD_DIRECTORY, file.filename)
 
-        # If it's not a .jpg file, change the extension
         if not file.filename.endswith(".jpg"):
             file_location = os.path.splitext(file_location)[0] + ".jpg"
         
-        # Save the file before calling the model
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Process the file with your model after saving it
-        name_list, boxes_list = traditional_model(file_location)
+        # Process the file with the appropriate model based on model_type
+        if model_type == "traditional":
+            name_list, boxes_list = traditional_model(file_location)
+        elif model_type == "deep-learning":
+            if deep_learning_model == "facenet":
+                name_list, boxes_list = facenet_model(file_location)
+            elif deep_learning_model == "deepface":
+                name_list, boxes_list = deepface_model(file_location)
+            else:
+                return JSONResponse(content={"message": "Invalid deep learning model specified"}, status_code=400)
+        else:
+            return JSONResponse(content={"message": "Invalid model type specified"}, status_code=400)
 
         return JSONResponse(content={"message": "File uploaded successfully", "names": name_list, "bounding": boxes_list}, status_code=200)
 
