@@ -1,0 +1,11 @@
+Confusion Matrix:
+
+True\Pred	amisha	dhanoosh	jose	jui	ritvi	siddhangana	sparsh	yash
+amisha	5	0	0	1	0	0	0	0
+dhanoosh	0	6	0	0	0	0	0	0
+jose	0	0	6	0	0	0	0	0
+jui	0	0	0	6	0	0	0	0
+ritvi	0	0	0	0	6	0	0	0
+siddhangana	0	0	0	0	0	6	0	0
+sparsh	0	0	0	0	0	0	6	0
+yash	0	0	0	0	0	0	0	6

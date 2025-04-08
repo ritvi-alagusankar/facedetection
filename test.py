@@ -55,21 +55,6 @@ class FaceClassifier(nn.Module):
         
         return x
 
-# For backward compatibility
-class FaceClassifier(nn.Module):
-    def __init__(self, embedding_dim, num_classes):
-        super(FaceClassifier, self).__init__()
-        self.fc1 = nn.Linear(embedding_dim, 256)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(256, num_classes)
-        self.softmax = nn.Softmax(dim=1)
-    
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        return self.softmax(x)
-
 # Define Transformations
 test_transform = transforms.Compose([
     transforms.ToPILImage(),
@@ -78,23 +63,14 @@ test_transform = transforms.Compose([
 ])
 
 # Load trained model
-def load_model(model_path):
+def load_model(model_path="best_face_model.pkl"):
     try:
         with open(model_path, "rb") as f:
             data = pickle.load(f)
         
-        # Determine which model class to use based on model structure
-        try:
-            # First try loading with improved model
-            model = FaceClassifier(embedding_dim=512, num_classes=len(data['class_names']))
-            model.load_state_dict(data['model'])
-            print("Loaded improved face classifier model")
-        except Exception as e:
-            print(f"Failed to load improved model, trying legacy model: {e}")
-            # Fall back to original model if structure doesn't match
-            model = FaceClassifier(embedding_dim=512, num_classes=len(data['class_names']))
-            model.load_state_dict(data['model'])
-            print("Loaded legacy face classifier model")
+        model = FaceClassifier(embedding_dim=512, num_classes=len(data['class_names']))
+        model.load_state_dict(data['model'])
+        print("Loaded face classifier model")
         
         model.eval()
         return model, data['class_names']
@@ -124,14 +100,14 @@ def recognize_face(face_img, model, class_names):
         
         # Show confidence in real-time
         label = f"{class_names[pred_idx]} ({confidence:.2f})"
-        return label if confidence > 0.7 else "Unknown"
+        return label if confidence > 0.6 else "Unknown"
 
 # Calculate center point of a bounding box
 def get_center(box):
     return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
 
 # Run webcam for face recognition
-def run_webcam(model_path="face_model.pkl"):
+def run_webcam(model_path="best_face_model.pkl"):
     model, class_names = load_model(model_path)
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
