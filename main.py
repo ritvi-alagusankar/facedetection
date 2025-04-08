@@ -18,7 +18,7 @@ app = FastAPI()
 FACENET_MODEL_PATH = "model/best_face_model.pkl"
 
 facenet = InceptionResnetV1(pretrained='vggface2').eval()
-mtcnn = MTCNN(image_size=160, margin=40, keep_all=False, thresholds=[0.6, 0.7, 0.7], min_face_size=40)
+mtcnn = MTCNN(image_size=160, margin=40, keep_all=True, thresholds=[0.4, 0.5, 0.6], min_face_size=15)
 
 # Image transformations
 test_transform = transforms.Compose([
@@ -105,7 +105,8 @@ def facenet_model(img):
         # Convert boxes to list format
         boxes_list = []
         names = []
-        
+        img = np.array(img)
+
         for box in boxes:
             x1, y1, x2, y2 = box
             width = x2 - x1
@@ -113,8 +114,6 @@ def facenet_model(img):
             boxes_list.append([int(x1), int(y1), int(width), int(height)])
             
             # Extract face and get embedding
-            box_tensor = torch.tensor([[x1, y1, x2, y2]], dtype=torch.float32)
-            img = np.array(img)
             face = img[int(y1):int(y2), int(x1):int(x2)]
             if face is not None:
                 label = recognize_face(face, get_face_classifier(), facenet_class_names)
