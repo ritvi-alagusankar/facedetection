@@ -50,9 +50,10 @@ except Exception as e:
     facenet_class_names = []
 # Add model caching to avoid reloading the classifier on each request
 face_classifier = None
-
+known_faces_db = None
 try:
     # Attempt to load the DeepFace model for face recognition
+    known_faces_db = np.load(DB_PATH)
     model_data = DeepFace.build_model(MODEL_NAME)
     print(f"Loaded {MODEL_NAME} model successfully")
 except Exception as e:
@@ -271,16 +272,6 @@ def facenet_model(img):
 
 def run_recognition(img, db_path):
     
-    # Load the known faces database
-        try:
-            known_faces_db = np.load(db_path)
-            if len(known_faces_db.files) == 0:
-                print("Error: Empty database loaded.")
-                return
-            print(f"Loaded database with {len(known_faces_db.files)} people.")
-        except Exception as e:
-            print(f"Error loading database: {str(e)}")
-            return
         try:
             # Convert image to OpenCV format
             # Convert image to OpenCV format
@@ -288,7 +279,6 @@ def run_recognition(img, db_path):
             img_cv2 = cv2.cvtColor(img_cv2, cv2.COLOR_RGB2BGR)  # Convert RGB to BGR
             
             
-            # Detect faces using DeepFace
             faces = DeepFace.extract_faces(
                 img_path=img_cv2,
                 detector_backend="yunet",
@@ -324,12 +314,6 @@ def run_recognition(img, db_path):
 
                 embedding_vector = embedding_data[0]["embedding"]
 
-                # Load known face embeddings
-                try:
-                    known_faces_db = np.load(DB_PATH)
-                except:
-                    print("Error: Unable to load face database.")
-                    return [[], []]
 
                 best_match = "Unknown"
                 best_similarity = 0
@@ -344,7 +328,10 @@ def run_recognition(img, db_path):
 
                 # Apply similarity threshold
                 label = best_match if best_similarity >= SIMILARITY_THRESHOLD else "Unknown"
-                names.append(label)
+                if label != "Unknown":
+                    names.append(f"{label} ({best_similarity:.2f})")
+                else:
+                    names.append(label)
 
                 # Get bounding box
                 x, y, w, h = facial_area["x"], facial_area["y"], facial_area["w"], facial_area["h"]
