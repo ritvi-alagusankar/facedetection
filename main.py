@@ -147,7 +147,7 @@ def detect_faces(frame, facedetector):
         
     gray = cv2.equalizeHist(gray)
     if facedetector == "hog":
-        dlib_faces = face_detector_hog(gray, 1)  # 1 = upsample once
+        dlib_faces = face_detector_hog(gray, 0)  # 1 = upsample once
         return [(f.left(), f.top(), f.width(), f.height()) for f in dlib_faces]
     elif facedetector == "viola-jones":
         faces = face_detector_viola.detectMultiScale(
@@ -355,8 +355,8 @@ def deepface_model(img):
 
 
 # --- LBPH Configuration ---
-FACE_SIZE = (100, 100)
-CONFIDENCE_THRESHOLD = 100 # LBPH: Lower distance is better confidence
+FACE_SIZE_LBPH = (100, 100)
+CONFIDENCE_THRESHOLD_LBPH = 100 # LBPH: Lower distance is better confidence
 
 # Tracking parameters
 TRACK_MATCH_DISTANCE_THRESHOLD = 50     # Maximum pixel distance for face track matching
@@ -370,7 +370,6 @@ LABEL_MAP_FILENAME = "label_map_augmented.json"
 def load_models():
     """Loads the dlib face detector, LBPH recognizer, and label map."""
     print("[INFO] Loading face detector...")
-    detector = dlib.get_frontal_face_detector()
     try:
         print(f"[INFO] Loading trained LBPH model from: {MODEL_FILENAME}")
         recognizer = cv2.face.LBPHFaceRecognizer_create()
@@ -386,15 +385,16 @@ def load_models():
     except Exception as e:
         print(f"[ERROR] Error loading model or label map: {e}")
         exit(1)
-    return detector, recognizer, label_to_name
+    return recognizer, label_to_name
 
 
 # Load models globally
-#detector, recognizer, label_to_name = load_models()
-
+recognizer, label_to_name = load_models()
+tracks = []
+next_track_id = 0
 
 # --- Helper Functions ---
-def safe_resize(face_roi, size=FACE_SIZE):
+def safe_resize(face_roi, size=FACE_SIZE_LBPH):
     """Resizes the face region safely using INTER_AREA. Returns None on error."""
     try:
         return cv2.resize(face_roi, size, interpolation=cv2.INTER_AREA)
@@ -406,7 +406,7 @@ def extract_face(image, detector, min_size=10):
     """Detects faces, extracts first valid ROI. Returns (resized_face, bbox) or (None, None)."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     try:
-        faces = detector(gray, 1) # Use upsampling like training
+        faces = face_detector_hog(gray, 0) # Use upsampling like training
     except Exception as e:
         print(f"[ERROR] Face detection failed: {e}")
         return None, None
@@ -416,7 +416,6 @@ def extract_face(image, detector, min_size=10):
     x, y = max(0, x), max(0, y)
     img_h, img_w = gray.shape
     if w <= 0 or h <= 0 or x + w > img_w or y + h > img_h or w < min_size or h < min_size:
-        # print("[WARNING] Invalid face bounds detected.") # Can be verbose
         return None, None
     face_roi = gray[y:min(y + h, img_h), x:min(x + w, img_w)] # Ensure ROI within bounds
     if face_roi.size == 0: return None, None
@@ -547,107 +546,39 @@ def update_tracks_best_confidence(detections, tracks, next_track_id): # Renamed
 
 def lbph(img, detector):
     """Loads the dlib face detector, LBPH recognizer, and label map."""
-    print("[INFO] Loading face detector...")
-    
-    try:
-        print(f"[INFO] Loading trained LBPH model from: {MODEL_FILENAME}")
-        recognizer = cv2.face.LBPHFaceRecognizer_create()
-        recognizer.read(MODEL_FILENAME)
-        print(f"[INFO] Loading label map from: {LABEL_MAP_FILENAME}")
-        with open(LABEL_MAP_FILENAME, 'r') as f:
-            label_to_name_str_keys = json.load(f)
-            label_to_name = {int(k): v for k, v in label_to_name_str_keys.items()}
-        print(f"[INFO] Loaded label map: {label_to_name}")
-    except FileNotFoundError:
-        print(f"[ERROR] Model file '{MODEL_FILENAME}' or label map '{LABEL_MAP_FILENAME}' not found.")
-        exit(1)
-    except Exception as e:
-        print(f"[ERROR] Error loading model or label map: {e}")
-        exit(1)
+    global tracks, next_track_id
     """ Live recognition loop using the 'best-confidence-so-far' tracking strategy. """
     if not label_to_name: print("[ERROR] Label map not loaded."); return
-    print("[INFO] Starting live video stream (Best Confidence Strategy)...")
     img = np.array(img)
+    names, boxes = [], []  # Placeholder for LBPH model
     
-    time.sleep(1.0)
-    tracks = []
-    next_track_id = 0
-    prev_time = time.time()
-
-    while True:
-        
-       
-        current_time = time.time()
-        fps = 1 / (current_time - prev_time) if current_time - prev_time > 1e-3 else 0
-        prev_time = current_time
-
+    detections = process_detections(img, face_detector_hog, recognizer, label_to_name)
     
+    tracks, next_track_id = update_tracks_best_confidence(detections, tracks, next_track_id)
+    for track in tracks:
+        x, y, w, h = track['bbox']
 
-        faces = detect_faces(img, detector)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Get the best confidence found so far, default to infinity if not set
+        best_conf = track.get('best_confidence', float('inf'))
 
-        detections = []
-        for (x, y, w, h) in faces:
-            x1, y1 = max(0, x), max(0, y)
-            x2, y2 = min(img.shape[1], x + w), min(img.shape[0], y + h)
-            roi_gray = gray[y1:y2, x1:x2]
-
-            if roi_gray.size == 0:
-                continue
-
-            resized_face = safe_resize(roi_gray)
-            if resized_face is None:
-                continue
-
-            try:
-                label_id, confidence = recognizer.predict(resized_face)
-                name = label_to_name.get(label_id, "Unknown")
-                detections.append({
-                    'bbox': (x1, y1, x2 - x1, y2 - y1),
-                    'centroid': get_centroid((x1, y1, x2 - x1, y2 - y1)),
-                    'label': label_id,
-                    'confidence': confidence,
-                    'name': name
-                })
-            except Exception as e:
-                print(f"[ERROR] Prediction failed: {e}")
-                continue
-
-        # Use the new update function
-        tracks, next_track_id = update_tracks_best_confidence(detections, tracks, next_track_id)
-
-        # --- Display Logic (MODIFIED) ---
-        for track in tracks:
-            x, y, w, h = track['bbox']
-
-            # Get the best confidence found so far, default to infinity if not set
-            best_conf = track.get('best_confidence', float('inf'))
-
-            # Check if the best confidence is below the threshold
-            if best_conf < CONFIDENCE_THRESHOLD:
-                # Display the best label and confidence found so far
-                display_text = f"{track.get('best_name', '...')} ({best_conf:.2f})"
-                box_color = (0, 255, 0)   # Green for confident best match
-            else:
-                # Best match isn't good enough, or no match yet.
-                # Display the *current* frame's prediction tentatively.
-                current_conf = track.get('current_confidence', float('inf'))
-                current_name = track.get('current_name', '...')
-                # If there's a best name but confidence is high, maybe hint at it?
-                best_name_hint = track.get('best_name', None)
-                if best_name_hint and best_name_hint != "Unknown":
-                     display_text = f"({best_name_hint}? {best_conf:.2f}) ({current_name}? {current_conf:.2f})"
-                else: # Otherwise just show current tentative guess
-                     display_text = f"({current_name}?) ({current_conf:.2f})"
-                box_color = (255, 165, 0) # Blue/Orange for tentative/acquiring/low-confidence
-                 # --- End Display Logic ---
-
-        cv2.putText(img, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        cv2.putText(img, f"Tracks: {len(tracks)}", (img.shape[1] - 100, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-        cv2.imshow("Live Face Recognition (Best Confidence)", img)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        # Check if the best confidence is below the threshold
+        if best_conf < CONFIDENCE_THRESHOLD_LBPH:
+            # Display the best label and confidence found so far
+            display_text = f"{track.get('best_name', '...')} ({best_conf:.2f})"
+        else:
+            # Best match isn't good enough, or no match yet.
+            # Display the *current* frame's prediction tentatively.
+            current_conf = track.get('current_confidence', float('inf'))
+            current_name = track.get('current_name', '...')
+            # If there's a best name but confidence is high, maybe hint at it?
+            best_name_hint = track.get('best_name', None)
+            if best_name_hint and best_name_hint != "Unknown":
+                display_text = f"({best_name_hint}? {best_conf:.2f}) ({current_name}? {current_conf:.2f})"
+            else: # Otherwise just show current tentative guess
+                display_text = f"({current_name}?) ({current_conf:.2f})"
+        names.append(display_text)
+        boxes.append([x, y, w, h])
+    return names, boxes  
 
 
     
