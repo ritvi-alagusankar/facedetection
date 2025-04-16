@@ -16,6 +16,8 @@ export default function FacialRecognition() {
   const [detectionResult, setDetectionResult] = useState<string | null>(null)
   const [activeModel, setActiveModel] = useState("deep-learning")
   const [deepLearningModel, setDeepLearningModel] = useState("facenet")
+  const [traditionalDetectionModel, setTraditionalDetectionModel] = useState("viola-jones")
+  const [traditionalRecognitionModel, setTraditionalRecognitionModel] = useState("eigenfaces")
   const intervalRef = useRef<number | null>(null)
   const processingRef = useRef(false)
 
@@ -59,7 +61,8 @@ export default function FacialRecognition() {
     formData.append("file", frame);
     formData.append("model_type", modelType);
     formData.append("deep_learning_model", deepLearningModel);
-
+    formData.append("traditional_detection_model", traditionalDetectionModel);
+    formData.append("traditional_recognition_model", traditionalRecognitionModel);
     try {
       const response = await fetch("http://localhost:8000/upload", {
         method: "POST",
@@ -231,7 +234,7 @@ export default function FacialRecognition() {
         stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [stream, activeModel, deepLearningModel]);
+  }, [stream, activeModel, deepLearningModel, traditionalDetectionModel, traditionalRecognitionModel]);
 
   // Stop webcam
   const stopWebcam = () => {
@@ -428,8 +431,158 @@ export default function FacialRecognition() {
                 Traditional Facial Recognition
               </CardTitle>
               <CardDescription className="text-base text-white/70">
-                Using classical computer vision techniques like Eigenfaces, Fisherfaces, and LBPH.
+                Using classical computer vision techniques for face detection and recognition.
               </CardDescription>
+              
+              <div className="flex flex-col space-y-6 mt-4">
+                {/* Face Detection Models */}
+                <div>
+                  <h3 className="text-white/90 font-medium mb-3">Face Detection Model</h3>
+                  <div className="flex space-x-4">
+                    <Button
+                      variant={traditionalDetectionModel === "viola-jones" ? "default" : "outline"}
+                      onClick={() => {
+                        setTraditionalDetectionModel("viola-jones");
+                        stopWebcam();
+                      }}
+                      className={`w-full transition-all duration-300 ${
+                        traditionalDetectionModel === "viola-jones"
+                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+                          : "border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" />
+                          <rect x="7" y="7" width="4" height="4" fill="currentColor" />
+                          <rect x="13" y="7" width="4" height="4" fill="currentColor" />
+                          <path d="M8 16h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                        <span>Viola-Jones</span>
+                      </div>
+                    </Button>
+                    <Button
+                      variant={traditionalDetectionModel === "hog" ? "default" : "outline"}
+                      onClick={() => {
+                        setTraditionalDetectionModel("hog");
+                        stopWebcam();
+                      }}
+                      className={`w-full transition-all duration-300 ${
+                        traditionalDetectionModel === "hog"
+                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+                          : "border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M2 5h20M2 9h20M2 13h20M2 17h20M2 21h20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                          <path d="M5 2v20M9 2v20M13 2v20M17 2v20M21 2v20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                        <span>HOG</span>
+                      </div>
+                    </Button>
+                  </div>
+                  <div className="text-sm text-white/50 text-left mt-2">
+                    {traditionalDetectionModel === "viola-jones"
+                      ? "Viola-Jones: A classic algorithm for real-time face detection using Haar-like features."
+                      : "HOG: Histogram of Oriented Gradients, a feature descriptor used for object detection."}
+                </div>
+              </div>
+                
+                
+                {/* Face Recognition Models */}
+                <div>
+                  <h3 className="text-white/90 font-medium mb-3">Face Recognition Model</h3>
+                  <div className="flex space-x-4">
+                    <Button
+                      variant={traditionalRecognitionModel === "eigenfaces" ? "default" : "outline"}
+                      onClick={() => {
+                        setTraditionalRecognitionModel("eigenfaces");
+                        stopWebcam();
+                      }}
+                      className={`w-full transition-all duration-300 ${
+                        traditionalRecognitionModel === "eigenfaces"
+                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+                          : "border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                          <circle cx="7" cy="7" r="2" fill="currentColor"/>
+                          <circle cx="17" cy="7" r="2" fill="currentColor"/>
+                          <circle cx="7" cy="17" r="2" fill="currentColor"/>
+                          <circle cx="17" cy="17" r="2" fill="currentColor"/>
+                        </svg>
+                        <span
+                          >Eigenfaces</span>
+                      </div>
+                    </Button>
+                    <Button
+                      variant={traditionalRecognitionModel === "fisherfaces" ? "default" : "outline"}
+                      onClick={() => {
+                        setTraditionalRecognitionModel("fisherfaces");
+                        stopWebcam();
+                      }}
+                      className={`w-full transition-all duration-300 ${
+                        traditionalRecognitionModel === "fisherfaces"
+                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+                          : "border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                          <circle cx="7" cy="7" r="2" fill="currentColor"/>
+                          <circle cx="17" cy="7" r="2" fill="currentColor"/>
+                          <circle cx="7" cy="17" r="2" fill="currentColor"/>
+                          <circle cx="17" cy="17" r="2" fill="currentColor"/>
+                        </svg>
+                        <span>Fisherfaces</span>
+                      </div>
+                    </Button>
+                    <Button
+                      variant={traditionalRecognitionModel === "lbph" ? "default" : "outline"}
+                      onClick={() => {
+                        setTraditionalRecognitionModel("lbph");
+                        stopWebcam();
+                      }}
+                      className={`w-full transition-all duration-300 ${
+                        traditionalRecognitionModel === "lbph"
+                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+                          : "border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                          <circle cx="7" cy="7" r="2" fill="currentColor"/>
+                          <circle cx="17" cy="7" r="2" fill="currentColor"/>
+                          <circle cx="7" cy="17" r="2" fill="currentColor"/>
+                          <circle cx="17" cy="17" r="2" fill="currentColor"/>
+                        </svg>
+                        <span>LBPH</span>
+                      </div>
+                    </Button>
+                  </div>
+                  <div className="text-sm text-white/50 text-left mt-2">
+                    {traditionalRecognitionModel === "eigenfaces"
+                      ? "Eigenfaces: A method that uses PCA to reduce dimensionality and recognize faces based on eigenvectors."
+                      : traditionalRecognitionModel === "fisherfaces"
+                      ? "Fisherfaces: An extension of eigenfaces that uses LDA for better discrimination between classes."
+                      : "LBPH: Local Binary Patterns Histograms, a simple yet effective method for face recognition."}
+                  </div>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="flex flex-col items-center space-y-6">
               <div className="relative w-full aspect-video bg-black/30 rounded-xl overflow-hidden flex items-center justify-center border border-white/10 shadow-[0_0_20px_rgba(34,211,238,0.1)]">
@@ -461,24 +614,12 @@ export default function FacialRecognition() {
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
                       <div className="flex flex-col items-center">
                         <Loader2 className="h-12 w-12 animate-spin text-cyan-400 mb-4" />
-                        <p className="text-white text-lg font-medium">Analyzing with traditional methods...</p>
+                        <p className="text-white text-lg font-medium">Analyzing with {traditionalRecognitionModel}...</p>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
-
-              {detectionResult && (
-                <div className="w-full p-6 bg-black/30 rounded-xl flex items-center space-x-4 border border-white/10 backdrop-blur-sm">
-                  <div className="bg-cyan-500/20 p-3 rounded-full">
-                    <User className="h-6 w-6 text-cyan-400" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-lg text-white">Detected: {detectionResult}</p>
-                    <p className="text-sm text-white/50">Using traditional methods</p>
-                  </div>
-                </div>
-              )}
             </CardContent>
             <CardFooter className="flex justify-between p-6">
               {!stream ? (
@@ -506,5 +647,6 @@ export default function FacialRecognition() {
         </TabsContent>
       </Tabs>
     </div>
-  )
+  ) 
 }
+                     

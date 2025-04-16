@@ -16,7 +16,8 @@ import cv2
 from deepface import DeepFace
 from tqdm import tqdm
 import argparse
-
+import dlib
+import joblib
 app = FastAPI()
 
 FACENET_MODEL_PATH = "model/best_face_model.pkl"
@@ -45,6 +46,17 @@ try:
         facenet_model_data = pickle.load(f)
         facenet_class_names = facenet_model_data['class_names']
         print(f"Loaded facenet model with classes: {facenet_class_names}")
+        OUTPUT_DIR = "./model"  # directory where models are saved
+        FACE_SIZE = (100, 100)   # match the size used during training
+        CONFIDENCE_THRESHOLD = 0.55  # minimum confidence threshold for recognition
+
+        print("[INFO] Loading traditional face recognition model...")
+        model = joblib.load(os.path.join(OUTPUT_DIR, "face_recognition_model.pkl"))
+        le = joblib.load(os.path.join(OUTPUT_DIR, "label_encoder.pkl"))
+        detector_type = joblib.load(os.path.join(OUTPUT_DIR, "detector_type.pkl"))
+        face_detector_hog = dlib.get_frontal_face_detector()
+        face_detector_viola = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        print("[INFO] Traditional face recognition model loaded successfully.")
 except Exception as e:
     print(f"Error loading model: {e}")
     facenet_class_names = []
@@ -106,91 +118,7 @@ class FaceClassifier(nn.Module):
         return x
 
 
-def enroll_faces(dataset_path, db_output_path):
-    """
-    Process images of known individuals from a dataset folder structure,
-    calculate average face embeddings, and save them to a database file.
-    
-    Args:
-        dataset_path: Path to the dataset folder containing subfolders with person images
-        db_output_path: Path where the database file should be saved
-    """
-    print("Starting enrollment process...")
-    
-    # Check if dataset path exists
-    if not os.path.exists(dataset_path):
-        print(f"Error: Dataset path '{dataset_path}' not found.")
-        return False
-    
-    # Dictionary to store embeddings for each person
-    known_face_embeddings = {}
-    
-    # Get person folders (each subfolder is a person)
-
-
-    person_folders = [f for f in os.listdir(dataset_path) 
-                      if os.path.isdir(os.path.join(dataset_path, f))]
-    
-    if len(person_folders) == 0:
-        print(f"No person folders found in '{dataset_path}'.")
-        return False
-    
-    # Process each person
-    for person in person_folders:
-        print(f"Enrolling {person}...")
-        person_path = os.path.join(dataset_path, person)
-        image_files = [f for f in os.listdir(person_path) 
-                       if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        
-        if len(image_files) == 0:
-            print(f"No images found for {person}. Skipping.")
-            continue
-        
-        # Store embeddings for this person
-        person_embeddings = []
-        
-        # Process each image for this person
-        for img_file in tqdm(image_files, desc=f"Processing {person}'s images"):
-            img_path = os.path.join(person_path, img_file)
-
-        try:
-                # Extract face embedding
-                embedding = DeepFace.represent(
-                    img_path=img_path,
-                    model_name=MODEL_NAME,
-                    detector_backend=ENROLLMENT_DETECTOR,
-                    enforce_detection=True
-                )
-                
-                if embedding and len(embedding) > 0:
-                    # DeepFace.represent returns a list of embeddings, we typically get the first one
-                    person_embeddings.append(embedding[0]["embedding"])
-            
-        except Exception as e:
-            # This could happen if no face is detected or other errors
-            print(f"  Warning: Could not process {img_file} - {str(e)}")
-        
-        # Calculate average embedding if we have at least one valid embedding
-        if len(person_embeddings) > 0:
-            avg_embedding = np.mean(person_embeddings, axis=0)
-            known_face_embeddings[person] = avg_embedding
-            print(f"  Successfully enrolled {person} with {len(person_embeddings)} images.")
-        else:
-            print(f"  Failed to enroll {person}. No valid face embeddings found.")
-    
-    # Save embeddings to database file
-    if len(known_face_embeddings) > 0:
-        np.savez_compressed(db_output_path, **known_face_embeddings)
-        print(f"Saved database with {len(known_face_embeddings)} people to {db_output_path}")
-        return True
-    else:
-        print("No valid embeddings found. Database not created.")
-        return False
-
-
-
-
-        
+       
 
 def calculate_cosine_similarity(embedding1, embedding2):
     """
@@ -212,8 +140,75 @@ def calculate_cosine_similarity(embedding1, embedding2):
     
     return similarity
 
-def traditional_model(img):
-    return [["Jose", "Ritvi"], [[100, 200, 100, 100], [200, 300, 100, 100]]]
+def detect_faces(frame, facedetector):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+    gray = cv2.equalizeHist(gray)
+    if facedetector == "hog":
+        dlib_faces = face_detector_hog(gray, 1)  # 1 = upsample once
+        return [(f.left(), f.top(), f.width(), f.height()) for f in dlib_faces]
+    elif facedetector == "viola-jones":
+        faces = face_detector_viola.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
+        # convert to list of (x, y, w, h) tuples
+        return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+    else:
+        raise ValueError(f"Unsupported face detector: {facedetector}")
+
+def preprocess_face(face):
+    face_resized = cv2.resize(face, FACE_SIZE)
+    face_processed = cv2.equalizeHist(face_resized)
+    return face_processed
+
+def predict_face(face, model, le):
+    """recognize face using the trained model"""
+    face_vector = face.flatten().reshape(1, -1)
+    
+    prediction = model.predict(face_vector)[0]
+    proba = model.predict_proba(face_vector)[0]
+    
+    max_proba_idx = np.argmax(proba)
+    confidence = proba[max_proba_idx]
+    
+    if confidence >= CONFIDENCE_THRESHOLD:
+        name = le.inverse_transform([prediction])[0]
+    else:
+        name = "Unknown"
+        
+    return name, confidence
+
+def eigenfaces(img, facedetector):
+    boxes, names = [], []  # Placeholder for traditional model
+    img = np.array(img)  # Convert PIL Image to numpy array
+    if facedetector is None:
+        print("[ERROR] Face detector not initialized")
+        return names, boxes
+    else:
+        face_locations = detect_faces(img, facedetector)
+    print(face_locations)  # Debugging line to check detected face locations
+    # process each detected face
+    for (x, y, w, h) in face_locations:
+        # extract face ROI
+        face_roi = img[y:y+h, x:x+w]
+    
+        # convert to grayscale
+        if len(face_roi.shape) == 3:
+            face_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+        
+        # preprocess face
+        processed_face = preprocess_face(face_roi)
+        
+        # predict identity
+        name, confidence = predict_face(processed_face, model, le)
+        if confidence >= CONFIDENCE_THRESHOLD:
+            names.append(f"{name} ({confidence:.2f})")
+            boxes.append([x, y, w, h])
+        else:
+            names.append("Unknown")
+            boxes.append([x, y, w, h])
+    print(names, boxes)  # Debugging line to check names and boxes
+    return names, boxes  # Return empty lists for names and boxes 
 
 
 def facenet_model(img):
@@ -327,7 +322,7 @@ def run_recognition(img, db_path):
                         best_match = person
 
                 # Apply similarity threshold
-                label = best_match if best_similarity >= SIMILARITY_THRESHOLD else "Unknown"
+                label = best_match if best_similarity >= 0.5 else "Unknown"
                 if label != "Unknown":
                     names.append(f"{label} ({best_similarity:.2f})")
                 else:
@@ -358,7 +353,7 @@ def deepface_model(img):
     
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), model_type: str = Form(...), deep_learning_model: str = Form(None)):
+async def upload_file(file: UploadFile = File(...), model_type: str = Form(...), deep_learning_model: str = Form(None), traditional_detection_model: str = Form(None), traditional_recognition_model: str = Form(None)):
     try:
         if not file.content_type.startswith('image/'):
             return JSONResponse(content={"message": "The uploaded file is not an image."}, status_code=400)
@@ -371,7 +366,14 @@ async def upload_file(file: UploadFile = File(...), model_type: str = Form(...),
 
         # Process the image with the appropriate model based on model_type
         if model_type == "traditional":
-            name_list, boxes_list = traditional_model(img)
+            if traditional_recognition_model == "eigenfaces":
+                name_list, boxes_list = eigenfaces(img, traditional_detection_model)
+            elif traditional_recognition_model == "fisherfaces":
+                name_list, boxes_list = eigenfaces(img, traditional_detection_model)
+            elif traditional_recognition_model == "lbph":
+                name_list, boxes_list = eigenfaces(img, traditional_detection_model)
+            else:
+                return JSONResponse(content={"message": "Invalid traditional recognition model specified"}, status_code=400)
         elif model_type == "deep-learning":
             if deep_learning_model == "facenet":
                 name_list, boxes_list = facenet_model(img)
