@@ -1,3 +1,4 @@
+# %%writefile continuous_confidence_tracker.py
 import os
 import cv2
 import dlib
@@ -7,15 +8,13 @@ import json
 import argparse
 
 # --- Configuration ---
-DATASET_PATH = "png_dataset/png_dataset"
+DATASET_PATH = "png_dataset/png_dataset" # Used only for the test mode
 FACE_SIZE = (100, 100)
-CONFIDENCE_THRESHOLD = 100
+CONFIDENCE_THRESHOLD = 100 # LBPH: Lower distance is better confidence
 
 # Tracking parameters
-TRACK_MATCH_DISTANCE_THRESHOLD = 50    # Maximum pixel distance for face track matching
-STABLE_COUNT_THRESHOLD = 5             # Number of consecutive frames for a stable prediction
-CONFIDENCE_TOLERANCE = 10              # Allowed variation in confidence
-MAX_MISSED_FRAMES = 10                 # Maximum missed frames before a track is removed
+TRACK_MATCH_DISTANCE_THRESHOLD = 50     # Maximum pixel distance for face track matching
+MAX_MISSED_FRAMES = 10                  # Maximum missed frames before a track is removed
 
 MODEL_FILENAME = "lbph_model_augmented.yml"
 LABEL_MAP_FILENAME = "label_map_augmented.json"
@@ -56,140 +55,88 @@ def safe_resize(face_roi, size=FACE_SIZE):
     except cv2.error:
         return None
 
-
+# extract_face function remains the same as before...
 def extract_face(image, detector, min_size=10):
-    """
-    Detects faces in the image and extracts the first valid face ROI.
-    
-    Returns:
-        A tuple (resized_face, bbox) or (None, None) if no valid face is found.
-    """
+    """Detects faces, extracts first valid ROI. Returns (resized_face, bbox) or (None, None)."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     try:
-        faces = detector(gray, 1)
+        faces = detector(gray, 1) # Use upsampling like training
     except Exception as e:
         print(f"[ERROR] Face detection failed: {e}")
         return None, None
-
-    if not faces:
-        return None, None
-
-    # Use the first detected face
-    face_rect = faces[0]
+    if not faces: return None, None
+    face_rect = max(faces, key=lambda rect: rect.width() * rect.height()) # Use largest face
     x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
     x, y = max(0, x), max(0, y)
     img_h, img_w = gray.shape
     if w <= 0 or h <= 0 or x + w > img_w or y + h > img_h or w < min_size or h < min_size:
-        print("[WARNING] Invalid face bounds detected.")
+        # print("[WARNING] Invalid face bounds detected.") # Can be verbose
         return None, None
-
-    face_roi = gray[y:y+h, x:x+w]
-    if face_roi.size == 0:
-        return None, None
-
+    face_roi = gray[y:min(y + h, img_h), x:min(x + w, img_w)] # Ensure ROI within bounds
+    if face_roi.size == 0: return None, None
     resized_face = safe_resize(face_roi)
     return resized_face, (x, y, w, h) if resized_face is not None else (None, None)
-
 
 def get_centroid(bbox):
     """Calculates the centroid of a given bounding box."""
     x, y, w, h = bbox
     return (x + w / 2, y + h / 2)
 
-
 def euclidean_distance(p1, p2):
     """Returns the Euclidean distance between two points."""
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
-
-# --- Dataset Testing ---
+# --- Dataset Testing (Remains the same) ---
 def test_model_on_dataset(data_folder_path, detector, recognizer, label_to_name):
-    """
-    Evaluates the LBPH model on images in the dataset folder.
-    """
+    # (Dataset testing code from the original prompt remains unchanged)
     print("\n" + "="*30)
     print("[INFO] Starting model testing on dataset...")
     print("="*30)
-
-    if not label_to_name:
-        print("[ERROR] Label map not loaded.")
-        return
-    if not os.path.isdir(data_folder_path):
-        print(f"[ERROR] Invalid dataset path: {data_folder_path}")
-        return
-
-    # Create a mapping from name to label
+    if not label_to_name: print("[ERROR] Label map not loaded."); return
+    if not os.path.isdir(data_folder_path): print(f"[ERROR] Invalid dataset path: {data_folder_path}"); return
     name_to_label = {v: k for k, v in label_to_name.items()}
     total_tested_faces = 0
     correct_predictions = 0
     total_detected_faces = 0
-
     for person_name in sorted(os.listdir(data_folder_path)):
         person_folder = os.path.join(data_folder_path, person_name)
-        if not os.path.isdir(person_folder):
-            continue
-
-        if person_name not in name_to_label:
-            print(f"[WARNING] Person '{person_name}' not found in label map. Skipping.")
-            continue
-
+        if not os.path.isdir(person_folder): continue
+        if person_name not in name_to_label: print(f"[WARNING] Person '{person_name}' not found in label map. Skipping."); continue
         expected_label = name_to_label[person_name]
         print(f"[TESTING] Evaluating images for: {person_name} (Expected Label: {expected_label})")
         images = os.listdir(person_folder)
         correct_in_folder = 0
-
         for image_file in images:
             image_path = os.path.join(person_folder, image_file)
             image = cv2.imread(image_path)
-            if image is None:
-                continue
-
+            if image is None: continue
             resized_face, bbox = extract_face(image, detector)
-            if resized_face is None:
-                continue
-
+            if resized_face is None: continue
             total_detected_faces += 1
             try:
                 label_id, confidence = recognizer.predict(resized_face)
-            except Exception as e:
-                print(f"[TESTING-ERROR] Prediction error on {image_path}: {e}")
-                continue
-
+            except Exception as e: print(f"[TESTING-ERROR] Prediction error on {image_path}: {e}"); continue
             total_tested_faces += 1
             if confidence < CONFIDENCE_THRESHOLD and label_id == expected_label:
                 correct_predictions += 1
                 correct_in_folder += 1
-            elif label_id == expected_label:
-                print(f"  - {image_file}: Correct label but high confidence ({confidence:.2f}) - Not counted.")
-            else:
-                predicted_name = label_to_name.get(label_id, "Unknown")
-                print(f"  - {image_file}: Incorrect prediction: {predicted_name} ({label_id}), confidence {confidence:.2f}")
-
+            elif label_id == expected_label: print(f"   - {image_file}: Correct label but high confidence ({confidence:.2f}) - Not counted.")
+            else: predicted_name = label_to_name.get(label_id, "Unknown"); print(f"   - {image_file}: Incorrect prediction: {predicted_name} ({label_id}), confidence {confidence:.2f}")
         print(f"[TESTING] {person_name}: Correct predictions: {correct_in_folder}/{len(images)}")
-
-    print("\n" + "="*30)
-    print("[INFO] Dataset Testing Summary")
-    print("="*30)
-    print(f"Total detected faces: {total_detected_faces}")
-    print(f"Total faces processed: {total_tested_faces}")
-    print(f"Total correct recognitions: {correct_predictions}")
-    if total_tested_faces:
-        accuracy = (correct_predictions / total_tested_faces) * 100
-        print(f"Recognition Success Rate: {accuracy:.2f}%")
-    else:
-        print("Recognition Success Rate: N/A")
+    print("\n" + "="*30 + "\n[INFO] Dataset Testing Summary\n" + "="*30)
+    print(f"Total detected faces: {total_detected_faces}\nTotal faces processed: {total_tested_faces}\nTotal correct recognitions: {correct_predictions}")
+    if total_tested_faces: accuracy = (correct_predictions / total_tested_faces) * 100; print(f"Recognition Success Rate: {accuracy:.2f}%")
+    else: print("Recognition Success Rate: N/A")
     print("="*30 + "\n")
 
 
-# --- Live Recognition with Tracking ---
+# --- Live Recognition with Tracking (MODIFIED LOGIC) ---
 def process_detections(frame, detector, recognizer, label_to_name):
-    """
-    Processes the current video frame: detects faces,
-    performs prediction, and returns a list of detection dictionaries.
-    """
+    """ Processes frame: detects faces, predicts. Returns list of detection dicts. """
+    # (This function remains mostly the same, just predicts)
     gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     try:
-        faces = detector(gray_frame, 0)
+        faces = detector(gray_frame, 0) # Use upsampling=0 for speed in live feed
     except Exception as e:
         print(f"[LIVE-ERROR] Face detection error: {e}")
         return []
@@ -197,47 +144,31 @@ def process_detections(frame, detector, recognizer, label_to_name):
     detections = []
     img_h, img_w = frame.shape[:2]
     for face_rect in faces:
-        # Clamp coordinates to image bounds
         x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(img_w, x + w), min(img_h, y + h)
         w_adj, h_adj = x2 - x1, y2 - y1
-
-        if w_adj <= 10 or h_adj <= 10:
-            continue
-
+        if w_adj <= 10 or h_adj <= 10: continue
         face_roi = gray_frame[y1:y2, x1:x2]
-        if face_roi.size == 0:
-            continue
-
+        if face_roi.size == 0: continue
         resized_face = safe_resize(face_roi)
-        if resized_face is None:
-            continue
-
+        if resized_face is None: continue
         try:
             label_id, confidence = recognizer.predict(resized_face)
-        except Exception as e:
-            print(f"[LIVE-ERROR] Prediction error: {e}")
-            continue
+        except Exception as e: print(f"[LIVE-ERROR] Prediction error: {e}"); continue
 
         detections.append({
             'bbox': (x1, y1, w_adj, h_adj),
             'centroid': get_centroid((x1, y1, w_adj, h_adj)),
-            'label': label_id,
-            'confidence': confidence,
-            'name': label_to_name.get(label_id, "Unknown")
+            'label': label_id,        # Current frame's prediction
+            'confidence': confidence,  # Current frame's confidence
+            'name': label_to_name.get(label_id, "Unknown") # Current frame's name
         })
     return detections
 
 
-def update_tracks(detections, tracks, next_track_id):
-    """
-    Updates or creates face tracks based on current detections.
-    
-    Returns:
-        A tuple (updated_tracks, next_track_id)
-    """
-    # Mark all current tracks as not updated this frame
+def update_tracks_best_confidence(detections, tracks, next_track_id): # Renamed
+    """ Updates tracks using the 'best-confidence-so-far' strategy. """
     for track in tracks:
         track['updated'] = False
 
@@ -247,37 +178,52 @@ def update_tracks(detections, tracks, next_track_id):
         best_track = None
         min_dist = TRACK_MATCH_DISTANCE_THRESHOLD
 
+        # Find best matching existing track
         for track in tracks:
-            if track['id'] in matched_track_ids:
-                continue
+            if track['id'] in matched_track_ids: continue
             dist = euclidean_distance(get_centroid(track['bbox']), detection_centroid)
             if dist < min_dist:
                 min_dist = dist
                 best_track = track
 
         if best_track is not None:
-            # Update existing track
+            # --- Update existing track ---
             best_track['bbox'] = detection['bbox']
             best_track['updated'] = True
             matched_track_ids.add(best_track['id'])
-            # Increase stability count if prediction remains consistent
-            if best_track['label'] == detection['label'] and abs(best_track['confidence'] - detection['confidence']) < CONFIDENCE_TOLERANCE:
-                best_track['stable_count'] += 1
-            else:
-                best_track['stable_count'] = 1
-            best_track['label'] = detection['label']
-            best_track['confidence'] = detection['confidence']
-            best_track['name'] = detection['name']
             best_track['missed_frames'] = 0
+
+            # --- Update Best Confidence Logic ---
+            # Check if the current detection's confidence is better (lower)
+            # than the best confidence recorded so far for this track.
+            current_best_conf = best_track.get('best_confidence', float('inf')) # Get current best, default to infinity
+            if detection['confidence'] < current_best_conf:
+                # Update the best known label, confidence, and name
+                best_track['best_label'] = detection['label']
+                best_track['best_confidence'] = detection['confidence']
+                best_track['best_name'] = detection['name']
+                # Optional: Log when a new best is found
+                # print(f"[INFO] Track {best_track['id']}: New best confidence {best_track['best_confidence']:.2f} for {best_track['best_name']}")
+
+            # --- Store current frame's raw prediction info (useful for display if best is poor) ---
+            best_track['current_label'] = detection['label']
+            best_track['current_confidence'] = detection['confidence']
+            best_track['current_name'] = detection['name']
+
+
         else:
-            # Create new track
+            # --- Create new track ---
             new_track = {
                 'id': next_track_id,
                 'bbox': detection['bbox'],
-                'label': detection['label'],
-                'confidence': detection['confidence'],
-                'name': detection['name'],
-                'stable_count': 1,
+                # Initialize best_* fields with the first detection's info
+                'best_label': detection['label'],
+                'best_confidence': detection['confidence'],
+                'best_name': detection['name'],
+                # Store current prediction info as well
+                'current_label': detection['label'],
+                'current_confidence': detection['confidence'],
+                'current_name': detection['name'],
                 'missed_frames': 0,
                 'updated': True
             }
@@ -291,25 +237,17 @@ def update_tracks(detections, tracks, next_track_id):
             track['missed_frames'] += 1
         if track['missed_frames'] <= MAX_MISSED_FRAMES:
             active_tracks.append(track)
+        # else: # Optional: Log track removal
+              # print(f"[INFO] Removing stale track {track['id']}")
     return active_tracks, next_track_id
 
 
 def run_live_recognition(detector, recognizer, label_to_name):
-    """
-    Opens the camera, performs detection, recognition, and tracking,
-    and displays the live prediction results.
-    """
-    if not label_to_name:
-        print("[ERROR] Label map not loaded.")
-        return
-
-    print("[INFO] Starting live video stream...")
+    """ Live recognition loop using the 'best-confidence-so-far' tracking strategy. """
+    if not label_to_name: print("[ERROR] Label map not loaded."); return
+    print("[INFO] Starting live video stream (Best Confidence Strategy)...")
     cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("[ERROR] Cannot open camera.")
-        return
-
-    # Warm up the camera sensor
+    if not cap.isOpened(): print("[ERROR] Cannot open camera."); return
     time.sleep(1.0)
     tracks = []
     next_track_id = 0
@@ -317,45 +255,52 @@ def run_live_recognition(detector, recognizer, label_to_name):
 
     while True:
         ret, frame = cap.read()
-        if not ret or frame is None:
-            print("[WARNING] Frame grab failed, retrying...")
-            time.sleep(0.5)
-            continue
+        if not ret or frame is None: time.sleep(0.5); continue
 
-        # Calculate FPS
         current_time = time.time()
         fps = 1 / (current_time - prev_time) if current_time - prev_time > 1e-3 else 0
         prev_time = current_time
 
-        # Process detections on the current frame
         detections = process_detections(frame, detector, recognizer, label_to_name)
-        tracks, next_track_id = update_tracks(detections, tracks, next_track_id)
+        # Use the new update function
+        tracks, next_track_id = update_tracks_best_confidence(detections, tracks, next_track_id)
 
-        # Display tracking results with refined display logic
+        # --- Display Logic (MODIFIED) ---
         for track in tracks:
             x, y, w, h = track['bbox']
-            if track['stable_count'] >= STABLE_COUNT_THRESHOLD:
-                if track['confidence'] < CONFIDENCE_THRESHOLD:
-                    display_text = f"{track['name']} ({track['confidence']:.2f})"
-                    box_color = (0, 255, 0)  # Confident match
-                else:
-                    display_text = f"Unknown ({track['confidence']:.2f})"
-                    box_color = (0, 165, 255)  # Low confidence
+
+            # Get the best confidence found so far, default to infinity if not set
+            best_conf = track.get('best_confidence', float('inf'))
+
+            # Check if the best confidence is below the threshold
+            if best_conf < CONFIDENCE_THRESHOLD:
+                # Display the best label and confidence found so far
+                display_text = f"{track.get('best_name', '...')} ({best_conf:.2f})"
+                box_color = (0, 255, 0)   # Green for confident best match
             else:
-                display_text = f"({track['name']}?) ({track['confidence']:.2f})"
-                box_color = (255, 165, 0)  # Tentative
+                # Best match isn't good enough, or no match yet.
+                # Display the *current* frame's prediction tentatively.
+                current_conf = track.get('current_confidence', float('inf'))
+                current_name = track.get('current_name', '...')
+                # If there's a best name but confidence is high, maybe hint at it?
+                best_name_hint = track.get('best_name', None)
+                if best_name_hint and best_name_hint != "Unknown":
+                     display_text = f"({best_name_hint}? {best_conf:.2f}) ({current_name}? {current_conf:.2f})"
+                else: # Otherwise just show current tentative guess
+                     display_text = f"({current_name}?) ({current_conf:.2f})"
+                box_color = (255, 165, 0) # Blue/Orange for tentative/acquiring/low-confidence
 
             cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
             text_y = y - 10 if y - 10 > 10 else y + h + 20
             cv2.putText(frame, display_text, (x, text_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2)
 
-        cv2.putText(frame, f"FPS: {int(fps)}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        cv2.putText(frame, f"Tracks: {len(tracks)}", (frame.shape[1] - 100, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        # --- End Display Logic ---
 
-        cv2.imshow("Live Face Recognition", frame)
+        cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(frame, f"Tracks: {len(tracks)}", (frame.shape[1] - 100, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        cv2.imshow("Live Face Recognition (Best Confidence)", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -367,14 +312,13 @@ def run_live_recognition(detector, recognizer, label_to_name):
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run face recognition either live from camera or for dataset testing."
-    )
+    parser = argparse.ArgumentParser(description="Run face recognition: live (best confidence) or test.")
     parser.add_argument("--mode", type=str, choices=["live", "test"], default="live",
-                        help="Mode: 'live' for camera or 'test' for dataset evaluation.")
+                        help="Mode: 'live' for camera (best confidence strategy), 'test' for dataset evaluation.")
     args = parser.parse_args()
 
     if args.mode == "test":
+        # Test mode still uses the original frame-by-frame evaluation
         test_model_on_dataset(DATASET_PATH, detector, recognizer, label_to_name)
-    else:
+    else: # 'live' mode
         run_live_recognition(detector, recognizer, label_to_name)
