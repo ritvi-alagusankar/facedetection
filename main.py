@@ -18,6 +18,8 @@ from tqdm import tqdm
 import argparse
 import dlib
 import joblib
+import json
+
 app = FastAPI()
 
 FACENET_MODEL_PATH = "model/best_face_model.pkl"
@@ -350,8 +352,305 @@ def deepface_model(img):
         print(f"Error in deepface_model: {str(e)}")
         return [[], []]  # Return valid format even if an error occurs
 
+
+
+# --- LBPH Configuration ---
+FACE_SIZE = (100, 100)
+CONFIDENCE_THRESHOLD = 100 # LBPH: Lower distance is better confidence
+
+# Tracking parameters
+TRACK_MATCH_DISTANCE_THRESHOLD = 50     # Maximum pixel distance for face track matching
+MAX_MISSED_FRAMES = 10                  # Maximum missed frames before a track is removed
+
+MODEL_FILENAME = "lbph_model_augmented.yml"
+LABEL_MAP_FILENAME = "label_map_augmented.json"
+
+
+# --- Model & Detector Loading ---
+def load_models():
+    """Loads the dlib face detector, LBPH recognizer, and label map."""
+    print("[INFO] Loading face detector...")
+    detector = dlib.get_frontal_face_detector()
+    try:
+        print(f"[INFO] Loading trained LBPH model from: {MODEL_FILENAME}")
+        recognizer = cv2.face.LBPHFaceRecognizer_create()
+        recognizer.read(MODEL_FILENAME)
+        print(f"[INFO] Loading label map from: {LABEL_MAP_FILENAME}")
+        with open(LABEL_MAP_FILENAME, 'r') as f:
+            label_to_name_str_keys = json.load(f)
+            label_to_name = {int(k): v for k, v in label_to_name_str_keys.items()}
+        print(f"[INFO] Loaded label map: {label_to_name}")
+    except FileNotFoundError:
+        print(f"[ERROR] Model file '{MODEL_FILENAME}' or label map '{LABEL_MAP_FILENAME}' not found.")
+        exit(1)
+    except Exception as e:
+        print(f"[ERROR] Error loading model or label map: {e}")
+        exit(1)
+    return detector, recognizer, label_to_name
+
+
+# Load models globally
+#detector, recognizer, label_to_name = load_models()
+
+
+# --- Helper Functions ---
+def safe_resize(face_roi, size=FACE_SIZE):
+    """Resizes the face region safely using INTER_AREA. Returns None on error."""
+    try:
+        return cv2.resize(face_roi, size, interpolation=cv2.INTER_AREA)
+    except cv2.error:
+        return None
+
+# extract_face function remains the same as before...
+def extract_face(image, detector, min_size=10):
+    """Detects faces, extracts first valid ROI. Returns (resized_face, bbox) or (None, None)."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    try:
+        faces = detector(gray, 1) # Use upsampling like training
+    except Exception as e:
+        print(f"[ERROR] Face detection failed: {e}")
+        return None, None
+    if not faces: return None, None
+    face_rect = max(faces, key=lambda rect: rect.width() * rect.height()) # Use largest face
+    x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
+    x, y = max(0, x), max(0, y)
+    img_h, img_w = gray.shape
+    if w <= 0 or h <= 0 or x + w > img_w or y + h > img_h or w < min_size or h < min_size:
+        # print("[WARNING] Invalid face bounds detected.") # Can be verbose
+        return None, None
+    face_roi = gray[y:min(y + h, img_h), x:min(x + w, img_w)] # Ensure ROI within bounds
+    if face_roi.size == 0: return None, None
+    resized_face = safe_resize(face_roi)
+    return resized_face, (x, y, w, h) if resized_face is not None else (None, None)
+
+def get_centroid(bbox):
+    """Calculates the centroid of a given bounding box."""
+    x, y, w, h = bbox
+    return (x + w / 2, y + h / 2)
+
+def euclidean_distance(p1, p2):
+    """Returns the Euclidean distance between two points."""
+    return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+
+# --- Live Recognition with Tracking (MODIFIED LOGIC) ---
+def process_detections(img, detector, recognizer, label_to_name):
+    """ Processes frame: detects faces, predicts. Returns list of detection dicts. """
+    # (This function remains mostly the same, just predicts)
+    gray_frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    try:
+        faces = detector(gray_frame, 0) # Use upsampling=0 for speed in live feed
+    except Exception as e:
+        print(f"[LIVE-ERROR] Face detection error: {e}")
+        return []
+
+    detections = []
+    img_h, img_w = img.shape[:2]
+    for face_rect in faces:
+        x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(img_w, x + w), min(img_h, y + h)
+        w_adj, h_adj = x2 - x1, y2 - y1
+        if w_adj <= 10 or h_adj <= 10: continue
+        face_roi = gray_frame[y1:y2, x1:x2]
+        if face_roi.size == 0: continue
+        resized_face = safe_resize(face_roi)
+        if resized_face is None: continue
+        try:
+            label_id, confidence = recognizer.predict(resized_face)
+        except Exception as e: print(f"[LIVE-ERROR] Prediction error: {e}"); continue
+
+        detections.append({
+            'bbox': (x1, y1, w_adj, h_adj),
+            'centroid': get_centroid((x1, y1, w_adj, h_adj)),
+            'label': label_id,        # Current frame's prediction
+            'confidence': confidence,  # Current frame's confidence
+            'name': label_to_name.get(label_id, "Unknown") # Current frame's name
+        })
+    return detections
+
+
+def update_tracks_best_confidence(detections, tracks, next_track_id): # Renamed
+    """ Updates tracks using the 'best-confidence-so-far' strategy. """
+    for track in tracks:
+        track['updated'] = False
+
+    matched_track_ids = set()
+    for detection in detections:
+        detection_centroid = detection['centroid']
+        best_track = None
+        min_dist = TRACK_MATCH_DISTANCE_THRESHOLD
+
+        # Find best matching existing track
+        for track in tracks:
+            if track['id'] in matched_track_ids: continue
+            dist = euclidean_distance(get_centroid(track['bbox']), detection_centroid)
+            if dist < min_dist:
+                min_dist = dist
+                best_track = track
+
+        if best_track is not None:
+            # --- Update existing track ---
+            best_track['bbox'] = detection['bbox']
+            best_track['updated'] = True
+            matched_track_ids.add(best_track['id'])
+            best_track['missed_frames'] = 0
+
+            # --- Update Best Confidence Logic ---
+            # Check if the current detection's confidence is better (lower)
+            # than the best confidence recorded so far for this track.
+            current_best_conf = best_track.get('best_confidence', float('inf')) # Get current best, default to infinity
+            if detection['confidence'] < current_best_conf:
+                # Update the best known label, confidence, and name
+                best_track['best_label'] = detection['label']
+                best_track['best_confidence'] = detection['confidence']
+                best_track['best_name'] = detection['name']
+                # Optional: Log when a new best is found
+                # print(f"[INFO] Track {best_track['id']}: New best confidence {best_track['best_confidence']:.2f} for {best_track['best_name']}")
+
+            # --- Store current frame's raw prediction info (useful for display if best is poor) ---
+            best_track['current_label'] = detection['label']
+            best_track['current_confidence'] = detection['confidence']
+            best_track['current_name'] = detection['name']
+
+
+        else:
+            # --- Create new track ---
+            new_track = {
+                'id': next_track_id,
+                'bbox': detection['bbox'],
+                # Initialize best_* fields with the first detection's info
+                'best_label': detection['label'],
+                'best_confidence': detection['confidence'],
+                'best_name': detection['name'],
+                # Store current prediction info as well
+                'current_label': detection['label'],
+                'current_confidence': detection['confidence'],
+                'current_name': detection['name'],
+                'missed_frames': 0,
+                'updated': True
+            }
+            tracks.append(new_track)
+            next_track_id += 1
+
+    # Update missed frames and remove stale tracks
+    active_tracks = []
+    for track in tracks:
+        if not track.get('updated'):
+            track['missed_frames'] += 1
+        if track['missed_frames'] <= MAX_MISSED_FRAMES:
+            active_tracks.append(track)
+        # else: # Optional: Log track removal
+              # print(f"[INFO] Removing stale track {track['id']}")
+    return active_tracks, next_track_id
+
+
+def lbph(img, detector):
+    """Loads the dlib face detector, LBPH recognizer, and label map."""
+    print("[INFO] Loading face detector...")
+    
+    try:
+        print(f"[INFO] Loading trained LBPH model from: {MODEL_FILENAME}")
+        recognizer = cv2.face.LBPHFaceRecognizer_create()
+        recognizer.read(MODEL_FILENAME)
+        print(f"[INFO] Loading label map from: {LABEL_MAP_FILENAME}")
+        with open(LABEL_MAP_FILENAME, 'r') as f:
+            label_to_name_str_keys = json.load(f)
+            label_to_name = {int(k): v for k, v in label_to_name_str_keys.items()}
+        print(f"[INFO] Loaded label map: {label_to_name}")
+    except FileNotFoundError:
+        print(f"[ERROR] Model file '{MODEL_FILENAME}' or label map '{LABEL_MAP_FILENAME}' not found.")
+        exit(1)
+    except Exception as e:
+        print(f"[ERROR] Error loading model or label map: {e}")
+        exit(1)
+    """ Live recognition loop using the 'best-confidence-so-far' tracking strategy. """
+    if not label_to_name: print("[ERROR] Label map not loaded."); return
+    print("[INFO] Starting live video stream (Best Confidence Strategy)...")
+    img = np.array(img)
+    
+    time.sleep(1.0)
+    tracks = []
+    next_track_id = 0
+    prev_time = time.time()
+
+    while True:
+        
+       
+        current_time = time.time()
+        fps = 1 / (current_time - prev_time) if current_time - prev_time > 1e-3 else 0
+        prev_time = current_time
+
     
 
+        faces = detect_faces(img, detector)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        detections = []
+        for (x, y, w, h) in faces:
+            x1, y1 = max(0, x), max(0, y)
+            x2, y2 = min(img.shape[1], x + w), min(img.shape[0], y + h)
+            roi_gray = gray[y1:y2, x1:x2]
+
+            if roi_gray.size == 0:
+                continue
+
+            resized_face = safe_resize(roi_gray)
+            if resized_face is None:
+                continue
+
+            try:
+                label_id, confidence = recognizer.predict(resized_face)
+                name = label_to_name.get(label_id, "Unknown")
+                detections.append({
+                    'bbox': (x1, y1, x2 - x1, y2 - y1),
+                    'centroid': get_centroid((x1, y1, x2 - x1, y2 - y1)),
+                    'label': label_id,
+                    'confidence': confidence,
+                    'name': name
+                })
+            except Exception as e:
+                print(f"[ERROR] Prediction failed: {e}")
+                continue
+
+        # Use the new update function
+        tracks, next_track_id = update_tracks_best_confidence(detections, tracks, next_track_id)
+
+        # --- Display Logic (MODIFIED) ---
+        for track in tracks:
+            x, y, w, h = track['bbox']
+
+            # Get the best confidence found so far, default to infinity if not set
+            best_conf = track.get('best_confidence', float('inf'))
+
+            # Check if the best confidence is below the threshold
+            if best_conf < CONFIDENCE_THRESHOLD:
+                # Display the best label and confidence found so far
+                display_text = f"{track.get('best_name', '...')} ({best_conf:.2f})"
+                box_color = (0, 255, 0)   # Green for confident best match
+            else:
+                # Best match isn't good enough, or no match yet.
+                # Display the *current* frame's prediction tentatively.
+                current_conf = track.get('current_confidence', float('inf'))
+                current_name = track.get('current_name', '...')
+                # If there's a best name but confidence is high, maybe hint at it?
+                best_name_hint = track.get('best_name', None)
+                if best_name_hint and best_name_hint != "Unknown":
+                     display_text = f"({best_name_hint}? {best_conf:.2f}) ({current_name}? {current_conf:.2f})"
+                else: # Otherwise just show current tentative guess
+                     display_text = f"({current_name}?) ({current_conf:.2f})"
+                box_color = (255, 165, 0) # Blue/Orange for tentative/acquiring/low-confidence
+                 # --- End Display Logic ---
+
+        cv2.putText(img, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(img, f"Tracks: {len(tracks)}", (img.shape[1] - 100, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        cv2.imshow("Live Face Recognition (Best Confidence)", img)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+
+    
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), model_type: str = Form(...), deep_learning_model: str = Form(None), traditional_detection_model: str = Form(None), traditional_recognition_model: str = Form(None)):
     try:
@@ -371,7 +670,7 @@ async def upload_file(file: UploadFile = File(...), model_type: str = Form(...),
             elif traditional_recognition_model == "fisherfaces":
                 name_list, boxes_list = eigenfaces(img, traditional_detection_model)
             elif traditional_recognition_model == "lbph":
-                name_list, boxes_list = eigenfaces(img, traditional_detection_model)
+                name_list, boxes_list = lbph(img, traditional_detection_model)
             else:
                 return JSONResponse(content={"message": "Invalid traditional recognition model specified"}, status_code=400)
         elif model_type == "deep-learning":
