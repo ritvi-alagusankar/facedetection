@@ -522,32 +522,6 @@ export default function FacialRecognition() {
                       </div>
                     </Button>
                     <Button
-                      variant={traditionalRecognitionModel === "fisherfaces" ? "default" : "outline"}
-                      onClick={() => {
-                        setTraditionalRecognitionModel("fisherfaces");
-                        stopWebcam();
-                      }}
-                      className={`w-full transition-all duration-300 ${
-                        traditionalRecognitionModel === "fisherfaces"
-                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-[0_0_15px_rgba(34,211,238,0.3)]"
-                          : "border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(34,211,238,0.1)]"
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          <circle cx="12" cy="12" r="2" fill="currentColor"/>
-                          <circle cx="7" cy="7" r="2" fill="currentColor"/>
-                          <circle cx="17" cy="7" r="2" fill="currentColor"/>
-                          <circle cx="7" cy="17" r="2" fill="currentColor"/>
-                          <circle cx="17" cy="17" r="2" fill="currentColor"/>
-                        </svg>
-                        <span>Fisherfaces</span>
-                      </div>
-                    </Button>
-                    <Button
                       variant={traditionalRecognitionModel === "lbph" ? "default" : "outline"}
                       onClick={() => {
                         setTraditionalRecognitionModel("lbph");

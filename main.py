@@ -553,31 +553,18 @@ def lbph(img, detector):
     names, boxes = [], []  # Placeholder for LBPH model
     
     detections = process_detections(img, face_detector_hog, recognizer, label_to_name)
+    for detection in detections:
+        bbox = detection["bbox"]
+        name = detection["name"]
+        confidence = detection["confidence"]
     
-    tracks, next_track_id = update_tracks_best_confidence(detections, tracks, next_track_id)
-    for track in tracks:
-        x, y, w, h = track['bbox']
-
-        # Get the best confidence found so far, default to infinity if not set
-        best_conf = track.get('best_confidence', float('inf'))
-
-        # Check if the best confidence is below the threshold
-        if best_conf < CONFIDENCE_THRESHOLD_LBPH:
+        if confidence < CONFIDENCE_THRESHOLD_LBPH:
             # Display the best label and confidence found so far
-            display_text = f"{track.get('best_name', '...')} ({best_conf:.2f})"
+            display_text = f"{name} ({confidence:.2f})"
         else:
-            # Best match isn't good enough, or no match yet.
-            # Display the *current* frame's prediction tentatively.
-            current_conf = track.get('current_confidence', float('inf'))
-            current_name = track.get('current_name', '...')
-            # If there's a best name but confidence is high, maybe hint at it?
-            best_name_hint = track.get('best_name', None)
-            if best_name_hint and best_name_hint != "Unknown":
-                display_text = f"({best_name_hint}? {best_conf:.2f}) ({current_name}? {current_conf:.2f})"
-            else: # Otherwise just show current tentative guess
-                display_text = f"({current_name}?) ({current_conf:.2f})"
+            display_text = f"Unknown"
         names.append(display_text)
-        boxes.append([x, y, w, h])
+        boxes.append(bbox)
     return names, boxes  
 
 
